@@ -29,7 +29,7 @@ static bool user_exists(sqlite3* db, int userId) {
 }
 
 int main() {
-    sqlite3* db = Database::init("users.db");
+    sqlite3* db = Database::init("db/users.db");
     if (!db) {
         return 1;
     }
