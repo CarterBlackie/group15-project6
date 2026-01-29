@@ -64,6 +64,42 @@ int main() {
         return res;
     });
 
+    // GET /users/:id -> return a single user by ID
+    CROW_ROUTE(app, "/users/<int>").methods(crow::HTTPMethod::GET)
+    ([db](int userId) {
+        const char* sql =
+            "SELECT id, firstName, lastName, email, createdAt, updatedAt "
+            "FROM users WHERE id = ?;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare query");
+        }
+
+        sqlite3_bind_int(stmt, 1, userId);
+
+        int rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            return json_error(404, "User not found");
+        }
+
+        crow::json::wvalue user;
+        user["id"] = sqlite3_column_int(stmt, 0);
+        user["firstName"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        user["lastName"]  = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        user["email"]     = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        user["createdAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+        user["updatedAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+
+        sqlite3_finalize(stmt);
+
+        crow::response res(200);
+        res.set_header("Content-Type", "application/json");
+        res.write(user.dump());
+        return res;
+    });
+
     // POST /users -> create a user (password stored as passwordHash for now)
     CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::POST)([db](const crow::request& req) {
         auto body = crow::json::load(req.body);
