@@ -63,3 +63,12 @@ docker run -d --name users-api-run -p 8080:8080 -v users_data:/app/db users-api
 
 ### View the website 
 http://localhost:8080
+
+
+checks for user list
+curl http://localhost:8080/users
+checks for specific user
+curl http://localhost:8080/users/1
+check for the accounts for the user
+curl http://localhost:8080/users/1/accounts
+
