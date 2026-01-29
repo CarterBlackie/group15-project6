@@ -59,7 +59,7 @@ The application runs inside a Docker container, exposes REST API endpoints using
 docker build -t users-api .
 
 ### Running the container
-docker run -p 8080:8080 users-api
+docker run -d --name users-api-run -p 8080:8080 -v users_data:/app/db users-api
 
 ### View the website 
 http://localhost:8080
