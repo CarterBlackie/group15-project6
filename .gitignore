@@ -1,0 +1,40 @@
+# ===== Build artifacts =====
+*.o
+*.out
+*.exe
+*.dll
+*.so
+*.a
+server
+
+# ===== CMake =====
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# ===== VS Code =====
+.vscode/
+
+# ===== OS files =====
+.DS_Store
+Thumbs.db
+
+# ===== Logs =====
+*.log
+
+# ===== Database files =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== Docker =====
+*.tar
+
+# ===== JMeter =====
+jmeter/results/
+jmeter/logs/
+
+# ===== Environment variables =====
+.env
