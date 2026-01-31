@@ -537,6 +537,32 @@ int main() {
         res.write(out.dump());
         return res;
     });
+    // DELETE /accounts/:id -> delete an account
+    CROW_ROUTE(app, "/accounts/<int>").methods(crow::HTTPMethod::DELETE)
+    ([db](int accountId) {
+        if (!account_exists(db, accountId)) {
+            return json_error(404, "Account not found");
+        }
+
+        const char* sql = "DELETE FROM accounts WHERE id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare delete");
+        }
+
+        sqlite3_bind_int(stmt, 1, accountId);
+
+        int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            return json_error(500, "Failed to delete account");
+        }
+
+        // 204 No Content
+        return crow::response(204);
+    });
 
     app.port(8080).multithreaded().run();
 
