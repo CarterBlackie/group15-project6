@@ -3,6 +3,8 @@
 
 #include <sqlite3.h>
 #include <string>
+#include <algorithm>
+#include <cctype>
 
 static crow::response json_error(int code, const std::string& msg) {
     crow::json::wvalue out;
@@ -43,6 +45,24 @@ static bool account_exists(sqlite3* db, int accountId) {
     return (rc == SQLITE_ROW);
 }
 
+// Trim leading/trailing whitespace
+static std::string trim(const std::string& s) {
+    size_t start = s.find_first_not_of(" \t\n\r");
+    size_t end   = s.find_last_not_of(" \t\n\r");
+    if (start == std::string::npos) return "";
+    return s.substr(start, end - start + 1);
+}
+
+// Very basic email check 
+static bool is_valid_email(const std::string& email) {
+    size_t at = email.find('@');
+    size_t dot = email.find('.', at == std::string::npos ? 0 : at);
+    return at != std::string::npos &&
+           dot != std::string::npos &&
+           at > 0 &&
+           dot > at + 1 &&
+           dot < email.length() - 1;
+}
 
 int main() {
     sqlite3* db = Database::init("db/users.db");
@@ -105,14 +125,34 @@ int main() {
             return json_error(400, "Missing required fields: firstName, lastName, email, password");
         }
 
-        std::string firstName = body["firstName"].s();
-        std::string lastName  = body["lastName"].s();
-        std::string email     = body["email"].s();
-        std::string password  = body["password"].s();
+        std::string firstName = trim(body["firstName"].s());
+        std::string lastName  = trim(body["lastName"].s());
+        std::string email     = trim(body["email"].s());
+        std::string password  = body["password"].s(); // don’t trim passwords
 
+        // Empty checks after trimming
         if (firstName.empty() || lastName.empty() || email.empty() || password.empty()) {
             return json_error(400, "Fields cannot be empty");
         }
+
+        // Length limits
+        if (firstName.length() > 100 || lastName.length() > 100) {
+            return json_error(400, "First and last name must be at most 100 characters");
+        }
+
+        if (email.length() > 255) {
+            return json_error(400, "Email must be at most 255 characters");
+        }
+
+        if (password.length() < 6) {
+            return json_error(400, "Password must be at least 6 characters");
+        }
+
+        // Email format check
+        if (!is_valid_email(email)) {
+            return json_error(400, "Invalid email format");
+        }
+
 
         // NOTE: Replace with real hashing later 
         std::string passwordHash = password;
