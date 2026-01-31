@@ -98,6 +98,18 @@ int main() {
 
     crow::SimpleApp app;
 
+    // Global OPTIONS handler for CORS preflight
+    CROW_ROUTE(app, "/<path>")
+    .methods(crow::HTTPMethod::OPTIONS)
+    ([](const crow::request&, crow::response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.code = 204;
+        res.end();
+    });
+
+
     // Health check
     CROW_ROUTE(app, "/health")([] {
         return crow::response(200, "OK");
