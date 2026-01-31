@@ -63,7 +63,7 @@ docker run -p 8080:8080 users-api
 docker compose up --build
 
 ### View the website 
-http://localhost:8080
+http://127.0.0.1:8080/health
 
 
 checks for user list
