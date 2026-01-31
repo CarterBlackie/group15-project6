@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>   // getenv
 
 static crow::response json_error(int code, const std::string& msg) {
     crow::json::wvalue out;
@@ -117,7 +118,12 @@ struct RequestLogger {
 
 
 int main() {
-    sqlite3* db = Database::init("db/users.db");
+    std::string dbPath = "db/users.db";
+    if (const char* envDb = std::getenv("DB_PATH")) {
+        dbPath = envDb;
+    }
+
+    sqlite3* db = Database::init(dbPath.c_str());
     if (!db) {
         return 1;
     }
@@ -861,7 +867,16 @@ int main() {
     });
 
 
-    app.port(8080).multithreaded().run();
+    int port = 8080;
+    if (const char* envPort = std::getenv("PORT")) {
+        try {
+            port = std::stoi(envPort);
+        } catch (...) {
+            std::cerr << "Invalid PORT value, using default 8080\n";
+        }
+    }
+
+    app.port(port).multithreaded().run();
 
     sqlite3_close(db);
     return 0;
