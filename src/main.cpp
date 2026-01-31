@@ -64,6 +64,15 @@ static bool is_valid_email(const std::string& email) {
            dot < email.length() - 1;
 }
 
+static bool is_allowed_account_type(const std::string& type) {
+    return type == "checking" || type == "savings";
+}
+
+static bool is_allowed_account_status(const std::string& status) {
+    return status == "active" || status == "locked";
+}
+
+
 int main() {
     sqlite3* db = Database::init("db/users.db");
     if (!db) {
@@ -291,19 +300,31 @@ int main() {
             return json_error(400, "Missing required field: type");
         }
 
-        std::string type = body["type"].s();
+        std::string type = trim(body["type"].s());
         if (type.empty()) {
             return json_error(400, "type cannot be empty");
         }
 
+        if (!is_allowed_account_type(type)) {
+            return json_error(400, "Invalid account type (allowed: checking, savings)");
+        }
+
         std::string status = "active";
         if (body.has("status")) {
-            status = body["status"].s();
-            if (status.empty()) status = "active";
+            status = trim(body["status"].s());
+            if (status.empty()) {
+                return json_error(400, "status cannot be empty");
+            }
+            if (!is_allowed_account_status(status)) {
+                return json_error(400, "Invalid account status (allowed: active, locked)");
+            }
         }
 
         double balance = 0.0;
         if (body.has("balance")) {
+            if (!body["balance"].is_number()) {
+                return json_error(400, "balance must be a number");
+            }
             balance = body["balance"].d();
             if (balance < 0) {
                 return json_error(400, "balance cannot be negative");
