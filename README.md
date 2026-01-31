@@ -3,10 +3,11 @@
 # Users & Accounts REST API
 
 ## Project Overview
-This project implements a containerized RESTful web server for managing Users and their associated Accounts. The system is designed for performance testing and analysis, with a focus on measuring and improving server behavior under load.
+This project implements a containerized RESTful API server for managing Users and their associated Accounts.
 
-The application runs inside a Docker container, exposes REST API endpoints using HTTP and JSON, and stores persistent data in a relational database.
+The server is written in C++ using the Crow framework, persists data using SQLite, and is designed to run entirely inside Docker.
 
+The API supports full CRUD operations, server-side validation, pagination, sorting, and business rules around account state transitions.
 ---
 
 ## System Features
