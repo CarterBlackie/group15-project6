@@ -103,9 +103,11 @@ int main() {
         return crow::response(200, "OK");
     });
 
-    // GET /users -> server-side sorted user listing
+    // GET /users -> server-side sorted + paginated user listing
     CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::GET)
     ([db](const crow::request& req) {
+
+        // ---- Sorting defaults ----
         std::string sort = "lastName";
         std::string order = "asc";
 
@@ -125,6 +127,26 @@ int main() {
             return json_error(400, "Invalid sort field");
         }
 
+        // ---- Pagination defaults ----
+        int page = 1;
+        int limit = 10;
+
+        if (req.url_params.get("page")) {
+            page = std::stoi(req.url_params.get("page"));
+        }
+        if (req.url_params.get("limit")) {
+            limit = std::stoi(req.url_params.get("limit"));
+        }
+
+        if (page < 1) {
+            return json_error(400, "page must be >= 1");
+        }
+
+        if (limit < 1 || limit > 100) {
+            return json_error(400, "limit must be between 1 and 100");
+        }
+
+        // ---- Fetch users (unsorted) ----
         const char* sql =
             "SELECT id, firstName, lastName, email, createdAt, updatedAt FROM users;";
 
@@ -157,6 +179,7 @@ int main() {
 
         sqlite3_finalize(stmt);
 
+        // ---- Server-side sorting ----
         auto cmp = [&](const UserRow& a, const UserRow& b) {
             if (sort == "firstName") return a.firstName < b.firstName;
             if (sort == "email")     return a.email < b.email;
@@ -169,11 +192,24 @@ int main() {
                 return (order == "asc") ? cmp(a, b) : cmp(b, a);
             });
 
+        // ---- Pagination ----
+        int start = (page - 1) * limit;
+        int end = std::min(start + limit, (int)users.size());
+
+        std::vector<UserRow> pagedUsers;
+        if (start < (int)users.size()) {
+            pagedUsers.assign(users.begin() + start, users.begin() + end);
+        }
+
+        // ---- Build response ----
         crow::json::wvalue result;
+        result["page"] = page;
+        result["limit"] = limit;
+        result["total"] = (int)users.size();
         result["users"] = crow::json::wvalue::list();
 
         int i = 0;
-        for (const auto& u : users) {
+        for (const auto& u : pagedUsers) {
             crow::json::wvalue j;
             j["id"] = u.id;
             j["firstName"] = u.firstName;
@@ -189,6 +225,7 @@ int main() {
         res.write(result.dump());
         return res;
     });
+
 
 
     // POST /users -> create a user (password stored as passwordHash for now)
