@@ -89,6 +89,32 @@ static bool user_has_accounts(sqlite3* db, int userId) {
     return (rc == SQLITE_ROW);
 }
 
+struct RequestLogger {
+    struct context {
+        std::chrono::steady_clock::time_point start;
+    };
+
+    void before_handle(crow::request& req, crow::response&, context& ctx) {
+        ctx.start = std::chrono::steady_clock::now();
+    }
+
+    void after_handle(crow::request& req, crow::response& res, context& ctx) {
+        auto end = std::chrono::steady_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::milliseconds>(end - ctx.start).count();
+
+        std::time_t now = std::time(nullptr);
+
+        std::cout
+            << "[" << std::ctime(&now) << "] "
+            << req.method_name() << " "
+            << req.url << " "
+            << res.code << " "
+            << duration << "ms"
+            << std::endl;
+    }
+};
+
 
 int main() {
     sqlite3* db = Database::init("db/users.db");
@@ -96,7 +122,8 @@ int main() {
         return 1;
     }
 
-    crow::SimpleApp app;
+    crow::App<RequestLogger> app;
+
 
     // Global OPTIONS handler for CORS preflight
     CROW_ROUTE(app, "/<path>")
