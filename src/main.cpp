@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>   // getenv
+#include <fstream>
+#include <sstream>
 
 static crow::response json_error(int code, const std::string& msg) {
     crow::json::wvalue out;
@@ -128,6 +130,20 @@ struct RequestLogger {
     }
 };
 
+static crow::response serve_file(const std::string& path, const std::string& contentType) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return crow::response(404, "File not found: " + path);
+    }
+
+    std::ostringstream ss;
+    ss << file.rdbuf();
+
+    crow::response res(200);
+    res.set_header("Content-Type", contentType);
+    res.write(ss.str());
+    return res;
+}
 
 int main() {
     std::string dbPath = "db/users.db";
@@ -141,6 +157,31 @@ int main() {
     }
 
     crow::App<RequestLogger> app;
+
+        // ---- UI (served from the same origin: http://127.0.0.1:8080) ----
+    CROW_ROUTE(app, "/")([] {
+        return serve_file("UI/index.html", "text/html; charset=utf-8");
+    });
+
+    CROW_ROUTE(app, "/index.html")([] {
+        return serve_file("UI/index.html", "text/html; charset=utf-8");
+    });
+
+    CROW_ROUTE(app, "/users.html")([] {
+        return serve_file("UI/users.html", "text/html; charset=utf-8");
+    });
+
+    CROW_ROUTE(app, "/user.html")([] {
+        return serve_file("UI/user.html", "text/html; charset=utf-8");
+    });
+
+    CROW_ROUTE(app, "/app.js")([] {
+        return serve_file("UI/app.js", "application/javascript; charset=utf-8");
+    });
+
+    CROW_ROUTE(app, "/styles.css")([] {
+        return serve_file("UI/styles.css", "text/css; charset=utf-8");
+    });
 
 
     CROW_ROUTE(app, "/<path>")

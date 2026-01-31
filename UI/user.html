@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>User</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header>
+    <h1>User + Accounts</h1>
+    <div class="nav">
+      <a class="navlink" href="./index.html">Home</a>
+      <a class="navlink" href="./users.html">Users</a>
+      <a class="navlink" href="./user.html">User + Accounts</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="toolbar">
+        <div class="left">
+          <div>
+            <label for="apiBase">API Base URL</label>
+            <input id="apiBase" />
+          </div>
+          <div style="min-width:220px;">
+            <label for="userIdInput">User ID</label>
+            <input id="userIdInput" type="number" min="1" placeholder="e.g. 1" />
+          </div>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="btnHealth">Health</button>
+          <button class="secondary" id="btnGo">Go</button>
+          <button id="btnReloadUser">Reload user</button>
+          <button id="btnReloadAccounts">Reload accounts</button>
+        </div>
+      </div>
+      <div id="status" class="muted" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="toolbar">
+          <h2 style="margin:0;">User</h2>
+          <span class="pill" id="activeUserPill">id: -</span>
+        </div>
+        <pre id="userJson">{}</pre>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <h2 style="margin:0;">Accounts</h2>
+          <span class="pill" id="accountsCount">0</span>
+        </div>
+        <ul class="list" id="accountsList"></ul>
+
+        <hr style="border:none;border-top:1px solid #eef1f6;margin:14px 0;">
+
+        <h2>Create account</h2>
+        <div class="row-1">
+          <div>
+            <label>Type</label>
+            <input id="acctType" placeholder="chequing, savings, credit…" />
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <div>
+              <label>Status</label>
+              <select id="acctStatus">
+                <option value="active">active</option>
+                <option value="inactive">inactive</option>
+                <option value="closed">closed</option>
+              </select>
+            </div>
+            <div>
+              <label>Balance</label>
+              <input id="acctBalance" type="number" step="0.01" min="0" value="0" />
+            </div>
+          </div>
+        </div>
+        <div class="actions" style="margin-top:12px;">
+          <button id="btnCreateAccount">Create account</button>
+          <button class="secondary" id="btnClearAccount" type="button">Clear</button>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <h2>Last response</h2>
+          <pre id="lastJson">{}</pre>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { $, wireApiBaseInput, setActiveNav, setStatus, apiFetch, esc, qs, setQs, healthCheck } from "./app.js";
+
+    wireApiBaseInput();
+    setActiveNav("user.html");
+
+    function renderAccounts(list) {
+      const ul = $("accountsList");
+      ul.innerHTML = "";
+      $("accountsCount").textContent = String(list.length);
+
+      if (list.length === 0) {
+        const li = document.createElement("li");
+        li.className = "item";
+        li.innerHTML = "<div class='muted'>No accounts for this user.</div>";
+        ul.appendChild(li);
+        return;
+      }
+
+      list.forEach(a => {
+        const li = document.createElement("li");
+        li.className = "item";
+        li.innerHTML = `
+          <div style="min-width:0;">
+            <strong>${esc(a.type)} <span class="pill">${esc(a.status)}</span></strong><br/>
+            <span class="muted">id: ${a.id} • balance: ${Number(a.balance).toFixed(2)}</span>
+          </div>
+          <div class="pill">userId: ${a.userId}</div>
+        `;
+        ul.appendChild(li);
+      });
+    }
+
+    function activeUserId() {
+      const fromQs = qs("id");
+      if (fromQs) return Number(fromQs);
+      const fromInput = $("userIdInput").value.trim();
+      return fromInput ? Number(fromInput) : NaN;
+    }
+
+    async function loadUserAndAccounts() {
+      const id = activeUserId();
+      if (!Number.isInteger(id) || id <= 0) {
+        setStatus("Enter a valid user id.", "error");
+        return;
+      }
+
+      $("activeUserPill").textContent = "id: " + id;
+      $("userIdInput").value = String(id);
+
+      setStatus("Loading user…");
+      try {
+        const user = await apiFetch("/users/" + id, { method: "GET" });
+        $("userJson").textContent = JSON.stringify(user, null, 2);
+        setStatus("Loaded user.", "ok");
+      } catch (e) {
+        $("userJson").textContent = "{}";
+        renderAccounts([]);
+        setStatus(e.message, "error");
+        return;
+      }
+
+      await loadAccountsOnly();
+    }
+
+    async function loadAccountsOnly() {
+      const id = activeUserId();
+      if (!Number.isInteger(id) || id <= 0) return;
+
+      setStatus("Loading accounts…");
+      try {
+        const data = await apiFetch("/users/" + id + "/accounts", { method: "GET" });
+        renderAccounts(data?.accounts ?? []);
+        setStatus("Loaded accounts.", "ok");
+      } catch (e) {
+        renderAccounts([]);
+        setStatus(e.message, "error");
+      }
+    }
+
+    function clearAccountForm() {
+      $("acctType").value = "";
+      $("acctStatus").value = "active";
+      $("acctBalance").value = "0";
+    }
+
+    async function createAccount() {
+      const id = activeUserId();
+      if (!Number.isInteger(id) || id <= 0) {
+        setStatus("Enter a valid user id.", "error");
+        return;
+      }
+
+      const type = $("acctType").value.trim();
+      const status = $("acctStatus").value;
+      const balance = Number($("acctBalance").value);
+
+      if (!type) {
+        setStatus("Account type is required.", "error");
+        return;
+      }
+      if (!Number.isFinite(balance) || balance < 0) {
+        setStatus("Balance must be 0 or more.", "error");
+        return;
+      }
+
+      setStatus("Creating account…");
+      $("btnCreateAccount").disabled = true;
+      try {
+        await apiFetch("/users/" + id + "/accounts", {
+          method: "POST",
+          body: JSON.stringify({ type, status, balance })
+        });
+        setStatus("Account created.", "ok");
+        clearAccountForm();
+        await loadAccountsOnly();
+      } catch (e) {
+        setStatus(e.message, "error");
+      } finally {
+        $("btnCreateAccount").disabled = false;
+      }
+    }
+
+    $("btnHealth").onclick = healthCheck;
+
+    $("btnGo").onclick = () => {
+      const id = activeUserId();
+      if (Number.isInteger(id) && id > 0) setQs("id", String(id));
+      else setStatus("Enter a valid user id.", "error");
+    };
+
+    $("btnReloadUser").onclick = loadUserAndAccounts;
+    $("btnReloadAccounts").onclick = loadAccountsOnly;
+
+    $("btnCreateAccount").onclick = createAccount;
+    $("btnClearAccount").onclick = clearAccountForm;
+
+    const startId = qs("id");
+    if (startId) $("userIdInput").value = startId;
+
+    loadUserAndAccounts();
+  </script>
+</body>
+</html>
