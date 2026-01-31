@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Home</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header>
+    <h1>API UI</h1>
+    <div class="nav">
+      <a class="navlink" href="./index.html">Home</a>
+      <a class="navlink" href="./users.html">Users</a>
+      <a class="navlink" href="./user.html">User + Accounts</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="toolbar">
+        <div class="left">
+          <div>
+            <label for="apiBase">API Base URL</label>
+            <input id="apiBase" />
+          </div>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="btnHealth">Health</button>
+        </div>
+      </div>
+      <div id="status" class="muted" style="margin-top:10px;"></div>
+      <div class="muted" style="margin-top:10px;">
+        Use the pages above.
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <h2>Routes covered</h2>
+      <pre>{
+  "GET": ["/health", "/users", "/users/:id", "/users/:id/accounts"],
+  "POST": ["/users", "/users/:id/accounts"]
+}</pre>
+    </div>
+  </main>
+
+  <script type="module">
+    import { wireApiBaseInput, setActiveNav, healthCheck } from "./app.js";
+    wireApiBaseInput();
+    setActiveNav("index.html");
+    document.getElementById("btnHealth").onclick = healthCheck;
+  </script>
+</body>
+</html>

@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Users</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Users</h1>
+    <div class="nav">
+      <a class="navlink" href="./index.html">Home</a>
+      <a class="navlink" href="./users.html">Users</a>
+      <a class="navlink" href="./user.html">User + Accounts</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="toolbar">
+        <div class="left">
+          <div>
+            <label for="apiBase">API Base URL</label>
+            <input id="apiBase" />
+          </div>
+          <div style="min-width:220px;">
+            <label for="userSearch">Search</label>
+            <input id="userSearch" placeholder="Name or email…" />
+          </div>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="btnHealth">Health</button>
+          <button id="btnRefresh">Refresh</button>
+        </div>
+      </div>
+      <div id="status" class="muted" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="toolbar">
+          <h2 style="margin:0;">Users</h2>
+          <span class="pill" id="usersCount">0</span>
+        </div>
+        <ul class="list" id="usersList"></ul>
+        <div class="muted" style="margin-top:10px;">
+          Click <b>Open</b> to view that user’s accounts.
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Create user</h2>
+        <div class="row">
+          <div>
+            <label>First name</label>
+            <input id="firstName" />
+          </div>
+          <div>
+            <label>Last name</label>
+            <input id="lastName" />
+          </div>
+        </div>
+        <div class="row-1" style="margin-top:10px;">
+          <div>
+            <label>Email</label>
+            <input id="email" type="email" />
+          </div>
+          <div>
+            <label>Password</label>
+            <input id="password" type="password" />
+          </div>
+        </div>
+        <div class="actions" style="margin-top:12px;">
+          <button id="btnCreate">Create</button>
+          <button class="secondary" id="btnClear" type="button">Clear</button>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <h2>Last response</h2>
+          <pre id="lastJson">{}</pre>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { $, wireApiBaseInput, setActiveNav, setStatus, apiFetch, esc, healthCheck } from "./app.js";
+
+    wireApiBaseInput();
+    setActiveNav("users.html");
+
+    let usersCache = [];
+
+    function renderUsers(list) {
+      const ul = $("usersList");
+      ul.innerHTML = "";
+      $("usersCount").textContent = String(list.length);
+
+      if (list.length === 0) {
+        const li = document.createElement("li");
+        li.className = "item";
+        li.innerHTML = "<div class='muted'>No users found.</div>";
+        ul.appendChild(li);
+        return;
+      }
+
+      list.forEach(u => {
+        const li = document.createElement("li");
+        li.className = "item";
+
+        li.innerHTML = `
+          <div style="min-width:0;">
+            <strong>${esc(u.lastName)}, ${esc(u.firstName)}</strong><br/>
+            <span class="muted">${esc(u.email)} • id: ${u.id}</span>
+          </div>
+          <div class="actions">
+            <a class="navlink tiny" href="./user.html?id=${u.id}">Open</a>
+          </div>
+        `;
+        ul.appendChild(li);
+      });
+    }
+
+    function filtered() {
+      const q = $("userSearch").value.trim().toLowerCase();
+      if (!q) return usersCache;
+      return usersCache.filter(u => (`${u.firstName} ${u.lastName} ${u.email}`.toLowerCase()).includes(q));
+    }
+
+    async function loadUsers() {
+      setStatus("Loading users…");
+      try {
+        const data = await apiFetch("/users", { method: "GET" });
+        usersCache = data?.users ?? [];
+        renderUsers(filtered());
+        setStatus("Loaded users.", "ok");
+      } catch (e) {
+        setStatus(e.message, "error");
+      }
+    }
+
+    function clearForm() {
+      $("firstName").value = "";
+      $("lastName").value = "";
+      $("email").value = "";
+      $("password").value = "";
+    }
+
+    async function createUser() {
+      const firstName = $("firstName").value.trim();
+      const lastName = $("lastName").value.trim();
+      const email = $("email").value.trim();
+      const password = $("password").value;
+
+      if (!firstName || !lastName || !email || !password) {
+        setStatus("Fill in firstName, lastName, email, password.", "error");
+        return;
+      }
+
+      setStatus("Creating user…");
+      $("btnCreate").disabled = true;
+      try {
+        const created = await apiFetch("/users", {
+          method: "POST",
+          body: JSON.stringify({ firstName, lastName, email, password })
+        });
+        setStatus("User created (id: " + created.id + ").", "ok");
+        clearForm();
+        await loadUsers();
+      } catch (e) {
+        setStatus(e.message, "error");
+      } finally {
+        $("btnCreate").disabled = false;
+      }
+    }
+
+    $("btnHealth").onclick = healthCheck;
+    $("btnRefresh").onclick = loadUsers;
+    $("btnCreate").onclick = createUser;
+    $("btnClear").onclick = clearForm;
+
+    $("userSearch").addEventListener("input", () => renderUsers(filtered()));
+
+    loadUsers();
+  </script>
+</body>
+</html>
