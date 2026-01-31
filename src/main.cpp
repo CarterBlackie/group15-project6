@@ -581,6 +581,39 @@ int main() {
         return crow::response(204);
     });
 
+    // DELETE /users/:id -> delete a user (only if no accounts exist)
+    CROW_ROUTE(app, "/users/<int>").methods(crow::HTTPMethod::DELETE)
+    ([db](int userId) {
+        if (!user_exists(db, userId)) {
+            return json_error(404, "User not found");
+        }
+
+        // Task 7 guard: prevent deletion if accounts exist
+        if (user_has_accounts(db, userId)) {
+            return json_error(409, "Cannot delete user with existing accounts");
+        }
+
+        const char* sql = "DELETE FROM users WHERE id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare delete");
+        }
+
+        sqlite3_bind_int(stmt, 1, userId);
+
+        int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            return json_error(500, "Failed to delete user");
+        }
+
+        // 204 No Content
+        return crow::response(204);
+    });
+
+
     app.port(8080).multithreaded().run();
 
     sqlite3_close(db);
