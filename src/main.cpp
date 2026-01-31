@@ -72,6 +72,22 @@ static bool is_allowed_account_status(const std::string& status) {
     return status == "active" || status == "locked";
 }
 
+static bool user_has_accounts(sqlite3* db, int userId) {
+    const char* sql = "SELECT 1 FROM accounts WHERE userId = ? LIMIT 1;";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, userId);
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_ROW);
+}
+
 
 int main() {
     sqlite3* db = Database::init("db/users.db");
@@ -203,6 +219,7 @@ int main() {
         res.write(out.dump());
         return res;
     });
+
 
     // GET /users/:id -> return a single user by ID
     CROW_ROUTE(app, "/users/<int>").methods(crow::HTTPMethod::GET)
