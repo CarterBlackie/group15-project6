@@ -348,6 +348,63 @@ int main() {
         return res;
     });
 
+    // POST /login -> authenticate user
+    CROW_ROUTE(app, "/login").methods(crow::HTTPMethod::POST)
+    ([db](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return json_error(400, "Invalid JSON");
+        }
+
+        if (!body.has("email") || !body.has("password")) {
+            return json_error(400, "Missing required fields: email, password");
+        }
+
+        std::string email = trim(body["email"].s());
+        std::string password = body["password"].s();
+
+        if (email.empty() || password.empty()) {
+            return json_error(400, "Email and password cannot be empty");
+        }
+
+        const char* sql =
+            "SELECT id, passwordHash FROM users WHERE email = ?;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare query");
+        }
+
+        sqlite3_bind_text(stmt, 1, email.c_str(), -1, SQLITE_TRANSIENT);
+
+        int rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            return json_error(401, "Invalid email or password");
+        }
+
+        int userId = sqlite3_column_int(stmt, 0);
+        std::string storedHash =
+            reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+
+        sqlite3_finalize(stmt);
+
+        // NOTE: Plain-text comparison for now (documented limitation)
+        if (password != storedHash) {
+            return json_error(401, "Invalid email or password");
+        }
+
+        crow::json::wvalue out;
+        out["message"] = "Authentication successful";
+        out["userId"] = userId;
+
+        crow::response res(200);
+        res.set_header("Content-Type", "application/json");
+        res.write(out.dump());
+        return res;
+    });
+
+
 
     // GET /users/:id -> return a single user by ID
     CROW_ROUTE(app, "/users/<int>").methods(crow::HTTPMethod::GET)
@@ -428,6 +485,68 @@ int main() {
         res.write(result.dump());
         return res;
     });
+
+    // PUT /users/:id -> fully replace a user
+    CROW_ROUTE(app, "/users/<int>").methods(crow::HTTPMethod::PUT)
+    ([db](const crow::request& req, int userId) {
+        if (!user_exists(db, userId)) {
+            return json_error(404, "User not found");
+        }
+
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return json_error(400, "Invalid JSON");
+        }
+
+        if (!body.has("firstName") || !body.has("lastName") || !body.has("email")) {
+            return json_error(400, "Missing required fields: firstName, lastName, email");
+        }
+
+        std::string firstName = trim(body["firstName"].s());
+        std::string lastName  = trim(body["lastName"].s());
+        std::string email     = trim(body["email"].s());
+
+        if (firstName.empty() || lastName.empty() || email.empty()) {
+            return json_error(400, "Fields cannot be empty");
+        }
+
+        if (!is_valid_email(email)) {
+            return json_error(400, "Invalid email format");
+        }
+
+        const char* sql =
+            "UPDATE users SET firstName = ?, lastName = ?, email = ?, updatedAt = CURRENT_TIMESTAMP "
+            "WHERE id = ?;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare update");
+        }
+
+        sqlite3_bind_text(stmt, 1, firstName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, lastName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, email.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 4, userId);
+
+        int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            return json_error(500, "Failed to update user");
+        }
+
+        crow::json::wvalue out;
+        out["id"] = userId;
+        out["firstName"] = firstName;
+        out["lastName"] = lastName;
+        out["email"] = email;
+
+        crow::response res(200);
+        res.set_header("Content-Type", "application/json");
+        res.write(out.dump());
+        return res;
+    });
+
 
     // POST /users/:id/accounts -> create an account for a user
     CROW_ROUTE(app, "/users/<int>/accounts").methods(crow::HTTPMethod::POST)
