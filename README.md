@@ -64,3 +64,12 @@ docker compose up --build
 
 ### View the website 
 http://localhost:8080
+
+
+checks for user list
+curl http://localhost:8080/users
+checks for specific user
+curl http://localhost:8080/users/1
+check for the accounts for the user
+curl http://localhost:8080/users/1/accounts
+
