@@ -90,6 +90,18 @@ static bool user_has_accounts(sqlite3* db, int userId) {
     return (rc == SQLITE_ROW);
 }
 
+static const char* method_to_string(crow::HTTPMethod method) {
+    switch (method) {
+        case crow::HTTPMethod::GET:     return "GET";
+        case crow::HTTPMethod::POST:    return "POST";
+        case crow::HTTPMethod::PUT:     return "PUT";
+        case crow::HTTPMethod::PATCH:   return "PATCH";
+        case crow::HTTPMethod::DELETE:  return "DELETE";
+        case crow::HTTPMethod::OPTIONS: return "OPTIONS";
+        default:                        return "UNKNOWN";
+    }
+}
+
 struct RequestLogger {
     struct context {
         std::chrono::steady_clock::time_point start;
@@ -108,7 +120,7 @@ struct RequestLogger {
 
         std::cout
             << "[" << std::ctime(&now) << "] "
-            << req.method_name() << " "
+            << method_to_string(req.method) << " "
             << req.url << " "
             << res.code << " "
             << duration << "ms"
@@ -131,10 +143,9 @@ int main() {
     crow::App<RequestLogger> app;
 
 
-    // Global OPTIONS handler for CORS preflight
     CROW_ROUTE(app, "/<path>")
     .methods(crow::HTTPMethod::OPTIONS)
-    ([](const crow::request&, crow::response& res) {
+    ([](const crow::request&, crow::response& res, std::string) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
         res.set_header("Access-Control-Allow-Headers", "Content-Type");
