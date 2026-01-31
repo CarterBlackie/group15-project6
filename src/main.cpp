@@ -322,9 +322,10 @@ int main() {
 
         double balance = 0.0;
         if (body.has("balance")) {
-            if (!body["balance"].is_number()) {
-                return json_error(400, "balance must be a number");
+            if (body["balance"].t() != crow::json::type::Number) {
+            return json_error(400, "balance must be a number");
             }
+
             balance = body["balance"].d();
             if (balance < 0) {
                 return json_error(400, "balance cannot be negative");
@@ -373,7 +374,27 @@ int main() {
         if (!account_exists(db, accountId)) {
             return json_error(404, "Account not found");
         }
+        // Fetch current account status
+        std::string currentStatus;
+        {
+            const char* statusSql = "SELECT status FROM accounts WHERE id = ?;";
+            sqlite3_stmt* statusStmt = nullptr;
 
+            if (sqlite3_prepare_v2(db, statusSql, -1, &statusStmt, nullptr) != SQLITE_OK) {
+                return json_error(500, "Failed to read account status");
+            }
+
+            sqlite3_bind_int(statusStmt, 1, accountId);
+
+            int rc = sqlite3_step(statusStmt);
+            if (rc != SQLITE_ROW) {
+                sqlite3_finalize(statusStmt);
+                return json_error(404, "Account not found");
+            }
+
+            currentStatus = reinterpret_cast<const char*>(sqlite3_column_text(statusStmt, 0));
+            sqlite3_finalize(statusStmt);
+        }
         auto body = crow::json::load(req.body);
         if (!body) {
             return json_error(400, "Invalid JSON");
@@ -383,6 +404,19 @@ int main() {
         bool hasType = body.has("type");
         bool hasStatus = body.has("status");
         bool hasBalance = body.has("balance");
+
+        // Rule: locked accounts cannot change balance
+        if (currentStatus == "locked" && hasBalance) {
+            return json_error(400, "Cannot update balance on a locked account");
+        }
+
+        // Rule: locked accounts cannot be unlocked
+        if (currentStatus == "locked" && hasStatus) {
+            std::string newStatus = trim(body["status"].s());
+            if (newStatus == "active") {
+                return json_error(400, "Locked accounts cannot be reactivated");
+            }
+        }
 
         if (!hasType && !hasStatus && !hasBalance) {
             return json_error(400, "No valid fields to update (allowed: type, status, balance)");
