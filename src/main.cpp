@@ -28,6 +28,22 @@ static bool user_exists(sqlite3* db, int userId) {
     return (rc == SQLITE_ROW);
 }
 
+static bool account_exists(sqlite3* db, int accountId) {
+    const char* sql = "SELECT 1 FROM accounts WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, accountId);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_ROW);
+}
+
+
 int main() {
     sqlite3* db = Database::init("db/users.db");
     if (!db) {
@@ -285,6 +301,143 @@ int main() {
         out["balance"] = balance;
 
         crow::response res(201);
+        res.set_header("Content-Type", "application/json");
+        res.write(out.dump());
+        return res;
+    });
+
+    // PATCH /accounts/:id -> partial update of an account
+    CROW_ROUTE(app, "/accounts/<int>").methods(crow::HTTPMethod::PATCH)
+    ([db](const crow::request& req, int accountId) {
+        if (!account_exists(db, accountId)) {
+            return json_error(404, "Account not found");
+        }
+
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return json_error(400, "Invalid JSON");
+        }
+
+        // Allowed fields
+        bool hasType = body.has("type");
+        bool hasStatus = body.has("status");
+        bool hasBalance = body.has("balance");
+
+        if (!hasType && !hasStatus && !hasBalance) {
+            return json_error(400, "No valid fields to update (allowed: type, status, balance)");
+        }
+
+        // Reject unknown fields (catches typos)
+        for (const auto& kv : body) {
+            std::string key = kv.key();
+            if (key != "type" && key != "status" && key != "balance") {
+                return json_error(400, "Unknown field: " + key);
+            }
+        }
+
+        std::string type;
+        std::string status;
+        double balance = 0.0;
+
+        if (hasType) {
+            type = body["type"].s();
+            if (type.empty()) {
+                return json_error(400, "type cannot be empty");
+            }
+        }
+
+        if (hasStatus) {
+            status = body["status"].s();
+            if (status.empty()) {
+                return json_error(400, "status cannot be empty");
+            }
+        }
+
+        if (hasBalance) {
+            balance = body["balance"].d();
+            if (balance < 0) {
+                return json_error(400, "balance cannot be negative");
+            }
+        }
+
+        // Build UPDATE dynamically
+        std::string sql = "UPDATE accounts SET ";
+        bool first = true;
+
+        if (hasType) {
+            sql += "type = ?";
+            first = false;
+        }
+        if (hasStatus) {
+            if (!first) sql += ", ";
+            sql += "status = ?";
+            first = false;
+        }
+        if (hasBalance) {
+            if (!first) sql += ", ";
+            sql += "balance = ?";
+            first = false;
+        }
+
+        // Always update updatedAt when PATCH succeeds
+        sql += ", updatedAt = CURRENT_TIMESTAMP";
+        sql += " WHERE id = ?;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare update");
+        }
+
+        int idx = 1;
+        if (hasType) {
+            sqlite3_bind_text(stmt, idx++, type.c_str(), -1, SQLITE_TRANSIENT);
+        }
+        if (hasStatus) {
+            sqlite3_bind_text(stmt, idx++, status.c_str(), -1, SQLITE_TRANSIENT);
+        }
+        if (hasBalance) {
+            sqlite3_bind_double(stmt, idx++, balance);
+        }
+
+        sqlite3_bind_int(stmt, idx++, accountId);
+
+        int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            return json_error(500, "Failed to update account");
+        }
+
+        // Return updated account
+        const char* selectSql =
+            "SELECT id, userId, type, status, balance, createdAt, updatedAt "
+            "FROM accounts WHERE id = ?;";
+
+        sqlite3_stmt* stmt2 = nullptr;
+        if (sqlite3_prepare_v2(db, selectSql, -1, &stmt2, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare query");
+        }
+
+        sqlite3_bind_int(stmt2, 1, accountId);
+
+        int rc2 = sqlite3_step(stmt2);
+        if (rc2 != SQLITE_ROW) {
+            sqlite3_finalize(stmt2);
+            return json_error(500, "Failed to read updated account");
+        }
+
+        crow::json::wvalue out;
+        out["id"] = sqlite3_column_int(stmt2, 0);
+        out["userId"] = sqlite3_column_int(stmt2, 1);
+        out["type"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 2));
+        out["status"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 3));
+        out["balance"] = sqlite3_column_double(stmt2, 4);
+        out["createdAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 5));
+        out["updatedAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 6));
+
+        sqlite3_finalize(stmt2);
+
+        crow::response res(200);
         res.set_header("Content-Type", "application/json");
         res.write(out.dump());
         return res;
