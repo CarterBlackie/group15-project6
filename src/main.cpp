@@ -3,6 +3,10 @@
 
 #include <sqlite3.h>
 #include <string>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>   // getenv
 
 static crow::response json_error(int code, const std::string& msg) {
     crow::json::wvalue out;
@@ -28,55 +32,257 @@ static bool user_exists(sqlite3* db, int userId) {
     return (rc == SQLITE_ROW);
 }
 
+static bool account_exists(sqlite3* db, int accountId) {
+    const char* sql = "SELECT 1 FROM accounts WHERE id = ?;";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, accountId);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_ROW);
+}
+
+// Trim leading/trailing whitespace
+static std::string trim(const std::string& s) {
+    size_t start = s.find_first_not_of(" \t\n\r");
+    size_t end   = s.find_last_not_of(" \t\n\r");
+    if (start == std::string::npos) return "";
+    return s.substr(start, end - start + 1);
+}
+
+// Very basic email check 
+static bool is_valid_email(const std::string& email) {
+    size_t at = email.find('@');
+    size_t dot = email.find('.', at == std::string::npos ? 0 : at);
+    return at != std::string::npos &&
+           dot != std::string::npos &&
+           at > 0 &&
+           dot > at + 1 &&
+           dot < email.length() - 1;
+}
+
+static bool is_allowed_account_type(const std::string& type) {
+    return type == "checking" || type == "savings";
+}
+
+static bool is_allowed_account_status(const std::string& status) {
+    return status == "active" || status == "locked";
+}
+
+static bool user_has_accounts(sqlite3* db, int userId) {
+    const char* sql = "SELECT 1 FROM accounts WHERE userId = ? LIMIT 1;";
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_int(stmt, 1, userId);
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    return (rc == SQLITE_ROW);
+}
+
+static const char* method_to_string(crow::HTTPMethod method) {
+    switch (method) {
+        case crow::HTTPMethod::GET:     return "GET";
+        case crow::HTTPMethod::POST:    return "POST";
+        case crow::HTTPMethod::PUT:     return "PUT";
+        case crow::HTTPMethod::PATCH:   return "PATCH";
+        case crow::HTTPMethod::DELETE:  return "DELETE";
+        case crow::HTTPMethod::OPTIONS: return "OPTIONS";
+        default:                        return "UNKNOWN";
+    }
+}
+
+struct RequestLogger {
+    struct context {
+        std::chrono::steady_clock::time_point start;
+    };
+
+    void before_handle(crow::request& req, crow::response&, context& ctx) {
+        ctx.start = std::chrono::steady_clock::now();
+    }
+
+    void after_handle(crow::request& req, crow::response& res, context& ctx) {
+        auto end = std::chrono::steady_clock::now();
+        auto duration =
+            std::chrono::duration_cast<std::chrono::milliseconds>(end - ctx.start).count();
+
+        std::time_t now = std::time(nullptr);
+
+        std::cout
+            << "[" << std::ctime(&now) << "] "
+            << method_to_string(req.method) << " "
+            << req.url << " "
+            << res.code << " "
+            << duration << "ms"
+            << std::endl;
+    }
+};
+
+
 int main() {
-    sqlite3* db = Database::init("db/users.db");
+    std::string dbPath = "db/users.db";
+    if (const char* envDb = std::getenv("DB_PATH")) {
+        dbPath = envDb;
+    }
+
+    sqlite3* db = Database::init(dbPath.c_str());
     if (!db) {
         return 1;
     }
 
-    crow::SimpleApp app;
+    crow::App<RequestLogger> app;
+
+
+    CROW_ROUTE(app, "/<path>")
+    .methods(crow::HTTPMethod::OPTIONS)
+    ([](const crow::request&, crow::response& res, std::string) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.code = 204;
+        res.end();
+    });
+
 
     // Health check
     CROW_ROUTE(app, "/health")([] {
         return crow::response(200, "OK");
     });
 
-    // GET /users -> returns all users (sorted by lastName then firstName)
-    CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::GET)([db] {
+    // GET /users -> server-side sorted + paginated user listing
+    CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::GET)
+    ([db](const crow::request& req) {
+
+        // ---- Sorting defaults ----
+        std::string sort = "lastName";
+        std::string order = "asc";
+
+        if (req.url_params.get("sort")) {
+            sort = req.url_params.get("sort");
+        }
+        if (req.url_params.get("order")) {
+            order = req.url_params.get("order");
+        }
+
+        if (order != "asc" && order != "desc") {
+            return json_error(400, "Invalid order (allowed: asc, desc)");
+        }
+
+        if (sort != "firstName" && sort != "lastName" &&
+            sort != "email" && sort != "createdAt") {
+            return json_error(400, "Invalid sort field");
+        }
+
+        // ---- Pagination defaults ----
+        int page = 1;
+        int limit = 10;
+
+        if (req.url_params.get("page")) {
+            page = std::stoi(req.url_params.get("page"));
+        }
+        if (req.url_params.get("limit")) {
+            limit = std::stoi(req.url_params.get("limit"));
+        }
+
+        if (page < 1) {
+            return json_error(400, "page must be >= 1");
+        }
+
+        if (limit < 1 || limit > 100) {
+            return json_error(400, "limit must be between 1 and 100");
+        }
+
+        // ---- Fetch users (unsorted) ----
         const char* sql =
-            "SELECT id, firstName, lastName, email, createdAt, updatedAt "
-            "FROM users ORDER BY lastName ASC, firstName ASC;";
+            "SELECT id, firstName, lastName, email, createdAt, updatedAt FROM users;";
 
         sqlite3_stmt* stmt = nullptr;
         if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
             return json_error(500, "Failed to prepare query");
         }
 
-        crow::json::wvalue result;
-        result["users"] = crow::json::wvalue::list();
+        struct UserRow {
+            int id;
+            std::string firstName;
+            std::string lastName;
+            std::string email;
+            std::string createdAt;
+            std::string updatedAt;
+        };
 
-        int i = 0;
+        std::vector<UserRow> users;
+
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            crow::json::wvalue u;
-
-            u["id"] = sqlite3_column_int(stmt, 0);
-            u["firstName"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            u["lastName"]  = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-            u["email"]     = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-            u["createdAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-            u["updatedAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-
-            // Crow compatibility: list by index
-            result["users"][i++] = std::move(u);
+            users.push_back({
+                sqlite3_column_int(stmt, 0),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4)),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5))
+            });
         }
 
         sqlite3_finalize(stmt);
+
+        // ---- Server-side sorting ----
+        auto cmp = [&](const UserRow& a, const UserRow& b) {
+            if (sort == "firstName") return a.firstName < b.firstName;
+            if (sort == "email")     return a.email < b.email;
+            if (sort == "createdAt") return a.createdAt < b.createdAt;
+            return a.lastName < b.lastName;
+        };
+
+        std::sort(users.begin(), users.end(),
+            [&](const UserRow& a, const UserRow& b) {
+                return (order == "asc") ? cmp(a, b) : cmp(b, a);
+            });
+
+        // ---- Pagination ----
+        int start = (page - 1) * limit;
+        int end = std::min(start + limit, (int)users.size());
+
+        std::vector<UserRow> pagedUsers;
+        if (start < (int)users.size()) {
+            pagedUsers.assign(users.begin() + start, users.begin() + end);
+        }
+
+        // ---- Build response ----
+        crow::json::wvalue result;
+        result["page"] = page;
+        result["limit"] = limit;
+        result["total"] = (int)users.size();
+        result["users"] = crow::json::wvalue::list();
+
+        int i = 0;
+        for (const auto& u : pagedUsers) {
+            crow::json::wvalue j;
+            j["id"] = u.id;
+            j["firstName"] = u.firstName;
+            j["lastName"] = u.lastName;
+            j["email"] = u.email;
+            j["createdAt"] = u.createdAt;
+            j["updatedAt"] = u.updatedAt;
+            result["users"][i++] = std::move(j);
+        }
 
         crow::response res(200);
         res.set_header("Content-Type", "application/json");
         res.write(result.dump());
         return res;
     });
+
+
 
     // POST /users -> create a user (password stored as passwordHash for now)
     CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::POST)([db](const crow::request& req) {
@@ -89,14 +295,34 @@ int main() {
             return json_error(400, "Missing required fields: firstName, lastName, email, password");
         }
 
-        std::string firstName = body["firstName"].s();
-        std::string lastName  = body["lastName"].s();
-        std::string email     = body["email"].s();
-        std::string password  = body["password"].s();
+        std::string firstName = trim(body["firstName"].s());
+        std::string lastName  = trim(body["lastName"].s());
+        std::string email     = trim(body["email"].s());
+        std::string password  = body["password"].s(); // don’t trim passwords
 
+        // Empty checks after trimming
         if (firstName.empty() || lastName.empty() || email.empty() || password.empty()) {
             return json_error(400, "Fields cannot be empty");
         }
+
+        // Length limits
+        if (firstName.length() > 100 || lastName.length() > 100) {
+            return json_error(400, "First and last name must be at most 100 characters");
+        }
+
+        if (email.length() > 255) {
+            return json_error(400, "Email must be at most 255 characters");
+        }
+
+        if (password.length() < 6) {
+            return json_error(400, "Password must be at least 6 characters");
+        }
+
+        // Email format check
+        if (!is_valid_email(email)) {
+            return json_error(400, "Invalid email format");
+        }
+
 
         // NOTE: Replace with real hashing later 
         std::string passwordHash = password;
@@ -138,6 +364,64 @@ int main() {
         res.write(out.dump());
         return res;
     });
+
+    // POST /login -> authenticate user
+    CROW_ROUTE(app, "/login").methods(crow::HTTPMethod::POST)
+    ([db](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return json_error(400, "Invalid JSON");
+        }
+
+        if (!body.has("email") || !body.has("password")) {
+            return json_error(400, "Missing required fields: email, password");
+        }
+
+        std::string email = trim(body["email"].s());
+        std::string password = body["password"].s();
+
+        if (email.empty() || password.empty()) {
+            return json_error(400, "Email and password cannot be empty");
+        }
+
+        const char* sql =
+            "SELECT id, passwordHash FROM users WHERE email = ?;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare query");
+        }
+
+        sqlite3_bind_text(stmt, 1, email.c_str(), -1, SQLITE_TRANSIENT);
+
+        int rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            return json_error(401, "Invalid email or password");
+        }
+
+        int userId = sqlite3_column_int(stmt, 0);
+        std::string storedHash =
+            reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+
+        sqlite3_finalize(stmt);
+
+        // NOTE: Plain-text comparison for now (documented limitation)
+        if (password != storedHash) {
+            return json_error(401, "Invalid email or password");
+        }
+
+        crow::json::wvalue out;
+        out["message"] = "Authentication successful";
+        out["userId"] = userId;
+
+        crow::response res(200);
+        res.set_header("Content-Type", "application/json");
+        res.write(out.dump());
+        return res;
+    });
+
+
 
     // GET /users/:id -> return a single user by ID
     CROW_ROUTE(app, "/users/<int>").methods(crow::HTTPMethod::GET)
@@ -219,6 +503,68 @@ int main() {
         return res;
     });
 
+    // PUT /users/:id -> fully replace a user
+    CROW_ROUTE(app, "/users/<int>").methods(crow::HTTPMethod::PUT)
+    ([db](const crow::request& req, int userId) {
+        if (!user_exists(db, userId)) {
+            return json_error(404, "User not found");
+        }
+
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return json_error(400, "Invalid JSON");
+        }
+
+        if (!body.has("firstName") || !body.has("lastName") || !body.has("email")) {
+            return json_error(400, "Missing required fields: firstName, lastName, email");
+        }
+
+        std::string firstName = trim(body["firstName"].s());
+        std::string lastName  = trim(body["lastName"].s());
+        std::string email     = trim(body["email"].s());
+
+        if (firstName.empty() || lastName.empty() || email.empty()) {
+            return json_error(400, "Fields cannot be empty");
+        }
+
+        if (!is_valid_email(email)) {
+            return json_error(400, "Invalid email format");
+        }
+
+        const char* sql =
+            "UPDATE users SET firstName = ?, lastName = ?, email = ?, updatedAt = CURRENT_TIMESTAMP "
+            "WHERE id = ?;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare update");
+        }
+
+        sqlite3_bind_text(stmt, 1, firstName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, lastName.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, email.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 4, userId);
+
+        int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            return json_error(500, "Failed to update user");
+        }
+
+        crow::json::wvalue out;
+        out["id"] = userId;
+        out["firstName"] = firstName;
+        out["lastName"] = lastName;
+        out["email"] = email;
+
+        crow::response res(200);
+        res.set_header("Content-Type", "application/json");
+        res.write(out.dump());
+        return res;
+    });
+
+
     // POST /users/:id/accounts -> create an account for a user
     CROW_ROUTE(app, "/users/<int>/accounts").methods(crow::HTTPMethod::POST)
     ([db](const crow::request& req, int userId) {
@@ -235,19 +581,32 @@ int main() {
             return json_error(400, "Missing required field: type");
         }
 
-        std::string type = body["type"].s();
+        std::string type = trim(body["type"].s());
         if (type.empty()) {
             return json_error(400, "type cannot be empty");
         }
 
+        if (!is_allowed_account_type(type)) {
+            return json_error(400, "Invalid account type (allowed: checking, savings)");
+        }
+
         std::string status = "active";
         if (body.has("status")) {
-            status = body["status"].s();
-            if (status.empty()) status = "active";
+            status = trim(body["status"].s());
+            if (status.empty()) {
+                return json_error(400, "status cannot be empty");
+            }
+            if (!is_allowed_account_status(status)) {
+                return json_error(400, "Invalid account status (allowed: active, locked)");
+            }
         }
 
         double balance = 0.0;
         if (body.has("balance")) {
+            if (body["balance"].t() != crow::json::type::Number) {
+            return json_error(400, "balance must be a number");
+            }
+
             balance = body["balance"].d();
             if (balance < 0) {
                 return json_error(400, "balance cannot be negative");
@@ -290,7 +649,245 @@ int main() {
         return res;
     });
 
-    app.port(8080).multithreaded().run();
+    // PATCH /accounts/:id -> partial update of an account
+    CROW_ROUTE(app, "/accounts/<int>").methods(crow::HTTPMethod::PATCH)
+    ([db](const crow::request& req, int accountId) {
+        if (!account_exists(db, accountId)) {
+            return json_error(404, "Account not found");
+        }
+        // Fetch current account status
+        std::string currentStatus;
+        {
+            const char* statusSql = "SELECT status FROM accounts WHERE id = ?;";
+            sqlite3_stmt* statusStmt = nullptr;
+
+            if (sqlite3_prepare_v2(db, statusSql, -1, &statusStmt, nullptr) != SQLITE_OK) {
+                return json_error(500, "Failed to read account status");
+            }
+
+            sqlite3_bind_int(statusStmt, 1, accountId);
+
+            int rc = sqlite3_step(statusStmt);
+            if (rc != SQLITE_ROW) {
+                sqlite3_finalize(statusStmt);
+                return json_error(404, "Account not found");
+            }
+
+            currentStatus = reinterpret_cast<const char*>(sqlite3_column_text(statusStmt, 0));
+            sqlite3_finalize(statusStmt);
+        }
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return json_error(400, "Invalid JSON");
+        }
+
+        // Allowed fields
+        bool hasType = body.has("type");
+        bool hasStatus = body.has("status");
+        bool hasBalance = body.has("balance");
+
+        // Rule: locked accounts cannot change balance
+        if (currentStatus == "locked" && hasBalance) {
+            return json_error(400, "Cannot update balance on a locked account");
+        }
+
+        // Rule: locked accounts cannot be unlocked
+        if (currentStatus == "locked" && hasStatus) {
+            std::string newStatus = trim(body["status"].s());
+            if (newStatus == "active") {
+                return json_error(400, "Locked accounts cannot be reactivated");
+            }
+        }
+
+        if (!hasType && !hasStatus && !hasBalance) {
+            return json_error(400, "No valid fields to update (allowed: type, status, balance)");
+        }
+
+        // Reject unknown fields (catches typos)
+        for (const auto& kv : body) {
+            std::string key = kv.key();
+            if (key != "type" && key != "status" && key != "balance") {
+                return json_error(400, "Unknown field: " + key);
+            }
+        }
+
+        std::string type;
+        std::string status;
+        double balance = 0.0;
+
+        if (hasType) {
+            type = body["type"].s();
+            if (type.empty()) {
+                return json_error(400, "type cannot be empty");
+            }
+        }
+
+        if (hasStatus) {
+            status = body["status"].s();
+            if (status.empty()) {
+                return json_error(400, "status cannot be empty");
+            }
+        }
+
+        if (hasBalance) {
+            balance = body["balance"].d();
+            if (balance < 0) {
+                return json_error(400, "balance cannot be negative");
+            }
+        }
+
+        // Build UPDATE dynamically
+        std::string sql = "UPDATE accounts SET ";
+        bool first = true;
+
+        if (hasType) {
+            sql += "type = ?";
+            first = false;
+        }
+        if (hasStatus) {
+            if (!first) sql += ", ";
+            sql += "status = ?";
+            first = false;
+        }
+        if (hasBalance) {
+            if (!first) sql += ", ";
+            sql += "balance = ?";
+            first = false;
+        }
+
+        // Always update updatedAt when PATCH succeeds
+        sql += ", updatedAt = CURRENT_TIMESTAMP";
+        sql += " WHERE id = ?;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare update");
+        }
+
+        int idx = 1;
+        if (hasType) {
+            sqlite3_bind_text(stmt, idx++, type.c_str(), -1, SQLITE_TRANSIENT);
+        }
+        if (hasStatus) {
+            sqlite3_bind_text(stmt, idx++, status.c_str(), -1, SQLITE_TRANSIENT);
+        }
+        if (hasBalance) {
+            sqlite3_bind_double(stmt, idx++, balance);
+        }
+
+        sqlite3_bind_int(stmt, idx++, accountId);
+
+        int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            return json_error(500, "Failed to update account");
+        }
+
+        // Return updated account
+        const char* selectSql =
+            "SELECT id, userId, type, status, balance, createdAt, updatedAt "
+            "FROM accounts WHERE id = ?;";
+
+        sqlite3_stmt* stmt2 = nullptr;
+        if (sqlite3_prepare_v2(db, selectSql, -1, &stmt2, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare query");
+        }
+
+        sqlite3_bind_int(stmt2, 1, accountId);
+
+        int rc2 = sqlite3_step(stmt2);
+        if (rc2 != SQLITE_ROW) {
+            sqlite3_finalize(stmt2);
+            return json_error(500, "Failed to read updated account");
+        }
+
+        crow::json::wvalue out;
+        out["id"] = sqlite3_column_int(stmt2, 0);
+        out["userId"] = sqlite3_column_int(stmt2, 1);
+        out["type"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 2));
+        out["status"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 3));
+        out["balance"] = sqlite3_column_double(stmt2, 4);
+        out["createdAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 5));
+        out["updatedAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt2, 6));
+
+        sqlite3_finalize(stmt2);
+
+        crow::response res(200);
+        res.set_header("Content-Type", "application/json");
+        res.write(out.dump());
+        return res;
+    });
+    // DELETE /accounts/:id -> delete an account
+    CROW_ROUTE(app, "/accounts/<int>").methods(crow::HTTPMethod::DELETE)
+    ([db](int accountId) {
+        if (!account_exists(db, accountId)) {
+            return json_error(404, "Account not found");
+        }
+
+        const char* sql = "DELETE FROM accounts WHERE id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare delete");
+        }
+
+        sqlite3_bind_int(stmt, 1, accountId);
+
+        int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            return json_error(500, "Failed to delete account");
+        }
+
+        // 204 No Content
+        return crow::response(204);
+    });
+
+    // DELETE /users/:id -> delete a user (only if no accounts exist)
+    CROW_ROUTE(app, "/users/<int>").methods(crow::HTTPMethod::DELETE)
+    ([db](int userId) {
+        if (!user_exists(db, userId)) {
+            return json_error(404, "User not found");
+        }
+
+        // Task 7 guard: prevent deletion if accounts exist
+        if (user_has_accounts(db, userId)) {
+            return json_error(409, "Cannot delete user with existing accounts");
+        }
+
+        const char* sql = "DELETE FROM users WHERE id = ?;";
+        sqlite3_stmt* stmt = nullptr;
+
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare delete");
+        }
+
+        sqlite3_bind_int(stmt, 1, userId);
+
+        int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        if (rc != SQLITE_DONE) {
+            return json_error(500, "Failed to delete user");
+        }
+
+        // 204 No Content
+        return crow::response(204);
+    });
+
+
+    int port = 8080;
+    if (const char* envPort = std::getenv("PORT")) {
+        try {
+            port = std::stoi(envPort);
+        } catch (...) {
+            std::cerr << "Invalid PORT value, using default 8080\n";
+        }
+    }
+
+    app.port(port).multithreaded().run();
 
     sqlite3_close(db);
     return 0;
