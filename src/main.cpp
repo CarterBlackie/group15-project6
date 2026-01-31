@@ -3,6 +3,7 @@
 
 #include <sqlite3.h>
 #include <string>
+#include <vector>
 #include <algorithm>
 #include <cctype>
 
@@ -102,42 +103,93 @@ int main() {
         return crow::response(200, "OK");
     });
 
-    // GET /users -> returns all users (sorted by lastName then firstName)
-    CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::GET)([db] {
+    // GET /users -> server-side sorted user listing
+    CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::GET)
+    ([db](const crow::request& req) {
+        std::string sort = "lastName";
+        std::string order = "asc";
+
+        if (req.url_params.get("sort")) {
+            sort = req.url_params.get("sort");
+        }
+        if (req.url_params.get("order")) {
+            order = req.url_params.get("order");
+        }
+
+        if (order != "asc" && order != "desc") {
+            return json_error(400, "Invalid order (allowed: asc, desc)");
+        }
+
+        if (sort != "firstName" && sort != "lastName" &&
+            sort != "email" && sort != "createdAt") {
+            return json_error(400, "Invalid sort field");
+        }
+
         const char* sql =
-            "SELECT id, firstName, lastName, email, createdAt, updatedAt "
-            "FROM users ORDER BY lastName ASC, firstName ASC;";
+            "SELECT id, firstName, lastName, email, createdAt, updatedAt FROM users;";
 
         sqlite3_stmt* stmt = nullptr;
         if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
             return json_error(500, "Failed to prepare query");
         }
 
+        struct UserRow {
+            int id;
+            std::string firstName;
+            std::string lastName;
+            std::string email;
+            std::string createdAt;
+            std::string updatedAt;
+        };
+
+        std::vector<UserRow> users;
+
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            users.push_back({
+                sqlite3_column_int(stmt, 0),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3)),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4)),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5))
+            });
+        }
+
+        sqlite3_finalize(stmt);
+
+        auto cmp = [&](const UserRow& a, const UserRow& b) {
+            if (sort == "firstName") return a.firstName < b.firstName;
+            if (sort == "email")     return a.email < b.email;
+            if (sort == "createdAt") return a.createdAt < b.createdAt;
+            return a.lastName < b.lastName;
+        };
+
+        std::sort(users.begin(), users.end(),
+            [&](const UserRow& a, const UserRow& b) {
+                return (order == "asc") ? cmp(a, b) : cmp(b, a);
+            });
+
         crow::json::wvalue result;
         result["users"] = crow::json::wvalue::list();
 
         int i = 0;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            crow::json::wvalue u;
-
-            u["id"] = sqlite3_column_int(stmt, 0);
-            u["firstName"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            u["lastName"]  = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-            u["email"]     = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
-            u["createdAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
-            u["updatedAt"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
-
-            // Crow compatibility: list by index
-            result["users"][i++] = std::move(u);
+        for (const auto& u : users) {
+            crow::json::wvalue j;
+            j["id"] = u.id;
+            j["firstName"] = u.firstName;
+            j["lastName"] = u.lastName;
+            j["email"] = u.email;
+            j["createdAt"] = u.createdAt;
+            j["updatedAt"] = u.updatedAt;
+            result["users"][i++] = std::move(j);
         }
-
-        sqlite3_finalize(stmt);
 
         crow::response res(200);
         res.set_header("Content-Type", "application/json");
         res.write(result.dump());
         return res;
     });
+
 
     // POST /users -> create a user (password stored as passwordHash for now)
     CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::POST)([db](const crow::request& req) {
