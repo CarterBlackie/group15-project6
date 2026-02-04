@@ -145,6 +145,15 @@ static crow::response serve_file(const std::string& path, const std::string& con
     return res;
 }
 
+// Image processing constants
+static constexpr int IMAGE_MAX_ITERATIONS = 5000;
+
+static int get_int_or_default(const crow::json::rvalue& v, const std::string& key, int defVal) {
+    if (!v.has(key)) return defVal;
+    if (v[key].t() == crow::json::type::Number) return (int)v[key].i();
+    return defVal;
+}
+
 int main() {
     std::string dbPath = "db/users.db";
     if (const char* envDb = std::getenv("DB_PATH")) {
@@ -199,6 +208,27 @@ int main() {
     CROW_ROUTE(app, "/health")([] {
         return crow::response(200, "OK");
     });
+
+    CROW_ROUTE(app, "/images/process").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto body = crow::json::load(req.body);
+            if (!body) {
+                return crow::response(400, R"({"error":"Invalid JSON"})");
+            }
+
+            int iterations = get_int_or_default(body, "iterations", 1000);
+            if (iterations < 1 || iterations > IMAGE_MAX_ITERATIONS) {
+                return crow::response(400, R"({"error":"iterations out of range"})");
+            }
+
+            // Phase 1 placeholder response
+            crow::json::wvalue out;
+            out["message"] = "images/process route added (phase 1)";
+            out["iterations"] = iterations;
+            out["note"] = "base64 decode + CPU workload added in phase 2";
+            return crow::response(200, out);
+        }
+        );
 
     // GET /users -> server-side sorted + paginated user listing
     CROW_ROUTE(app, "/users").methods(crow::HTTPMethod::GET)
