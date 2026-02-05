@@ -145,6 +145,77 @@ static crow::response serve_file(const std::string& path, const std::string& con
     return res;
 }
 
+// Image CPU-load endpoint
+static constexpr size_t IMAGE_MAX_DECODED_BYTES = 1024 * 1024; // 1 MB
+
+static inline bool is_base64_char(unsigned char c) {
+    return (isalnum(c) || (c == '+') || (c == '/'));
+}
+
+// Minimal base64 decode
+static bool base64_decode(const std::string& input, std::vector<unsigned char>& out) {
+    static const std::string base64_chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+
+    int in_len = (int)input.size();
+    int i = 0;
+    int in_ = 0;
+    unsigned char char_array_4[4], char_array_3[3];
+
+    out.clear();
+    out.reserve((input.size() * 3) / 4);
+
+    while (in_len-- && (input[in_] != '=') && is_base64_char((unsigned char)input[in_])) {
+        char_array_4[i++] = (unsigned char)input[in_]; in_++;
+        if (i == 4) {
+            for (i = 0; i < 4; i++)
+                char_array_4[i] = (unsigned char)base64_chars.find(char_array_4[i]);
+
+            char_array_3[0] = (unsigned char)((char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4));
+            char_array_3[1] = (unsigned char)(((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2));
+            char_array_3[2] = (unsigned char)(((char_array_4[2] & 0x3) << 6) + char_array_4[3]);
+
+            for (i = 0; i < 3; i++) out.push_back(char_array_3[i]);
+
+            if (out.size() > IMAGE_MAX_DECODED_BYTES) return false;
+            i = 0;
+        }
+    }
+
+    if (i) {
+        for (int j = i; j < 4; j++) char_array_4[j] = 0;
+
+        for (int j = 0; j < 4; j++)
+            char_array_4[j] = (unsigned char)base64_chars.find(char_array_4[j]);
+
+        char_array_3[0] = (unsigned char)((char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4));
+        char_array_3[1] = (unsigned char)(((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2));
+        char_array_3[2] = (unsigned char)(((char_array_4[2] & 0x3) << 6) + char_array_4[3]);
+
+        for (int j = 0; j < (i - 1); j++) out.push_back(char_array_3[j]);
+        if (out.size() > IMAGE_MAX_DECODED_BYTES) return false;
+    }
+    return true;
+}
+
+// CPU workload: deterministic byte-mixing checksum
+static uint64_t cpu_mix_checksum(const std::vector<unsigned char>& data, int iterations) {
+    uint64_t acc = 1469598103934665603ULL; // FNV offset basis-ish
+    const size_t n = data.size();
+
+    for (int it = 0; it < iterations; ++it) {
+        for (size_t i = 0; i < n; ++i) {
+            acc ^= (uint64_t)data[i];
+            acc *= 1099511628211ULL;                 // prime
+            acc ^= (acc >> 32);
+            acc = (acc << 5) | (acc >> (64 - 5));    // rotate
+        }
+    }
+    return acc;
+}
+
 // Image processing constants
 static constexpr int IMAGE_MAX_ITERATIONS = 5000;
 
@@ -209,6 +280,7 @@ int main() {
         return crow::response(200, "OK");
     });
 
+    // Image processing endpoint route
     CROW_ROUTE(app, "/images/process").methods("POST"_method)(
         [](const crow::request& req) {
             auto body = crow::json::load(req.body);
@@ -216,16 +288,43 @@ int main() {
                 return crow::response(400, R"({"error":"Invalid JSON"})");
             }
 
+            if (!body.has("dataBase64") || body["dataBase64"].t() != crow::json::type::String) {
+                return crow::response(400, R"({"error":"Missing or invalid dataBase64"})");
+            }
+
             int iterations = get_int_or_default(body, "iterations", 1000);
             if (iterations < 1 || iterations > IMAGE_MAX_ITERATIONS) {
                 return crow::response(400, R"({"error":"iterations out of range"})");
             }
 
-            // Phase 1 placeholder response
+            std::string b64 = body["dataBase64"].s();
+            std::vector<unsigned char> bytes;
+
+            auto start = std::chrono::high_resolution_clock::now();
+
+            bool ok = base64_decode(b64, bytes);
+            if (!ok) {
+                return crow::response(413, R"({"error":"Invalid base64 or payload too large"})");
+            }
+            if (bytes.empty()) {
+                return crow::response(400, R"({"error":"Decoded payload is empty"})");
+            }
+
+            uint64_t checksum = cpu_mix_checksum(bytes, iterations);
+
+            auto end = std::chrono::high_resolution_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
             crow::json::wvalue out;
-            out["message"] = "images/process route added (phase 1)";
+            out["bytesProcessed"] = (int)bytes.size();
             out["iterations"] = iterations;
-            out["note"] = "base64 decode + CPU workload added in phase 2";
+            out["processingTimeMs"] = (int)ms;
+
+            // return checksum as hex-like string
+            std::ostringstream oss;
+            oss << std::hex << checksum;
+            out["checksum"] = oss.str();
+
             return crow::response(200, out);
         }
         );
