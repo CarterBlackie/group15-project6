@@ -918,6 +918,81 @@ int main() {
         return crow::response(204);
     });
 
+    // GET /accounts CPU-intensive aggregation over all accounts
+    CROW_ROUTE(app, "/accounts").methods(crow::HTTPMethod::GET)
+    ([db](const crow::request& req) {
+
+        int iterations = 1;
+        if (req.url_params.get("iterations")) {
+            iterations = std::max(1, std::stoi(req.url_params.get("iterations")));
+        }
+
+        const char* sql =
+            "SELECT balance, status FROM accounts;";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return json_error(500, "Failed to prepare benchmark query");
+        }
+
+        struct AccountRow {
+            double balance;
+            std::string status;
+        };
+
+        std::vector<AccountRow> accounts;
+
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            accounts.push_back({
+                sqlite3_column_double(stmt, 0),
+                reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1))
+            });
+        }
+
+        sqlite3_finalize(stmt);
+
+        // ---- CPU-heavy aggregation ----
+        double totalBalance = 0.0;
+        double minBalance = std::numeric_limits<double>::max();
+        double maxBalance = 0.0;
+        int activeCount = 0;
+        int lockedCount = 0;
+
+        for (int it = 0; it < iterations; ++it) {
+            totalBalance = 0.0;
+            minBalance = std::numeric_limits<double>::max();
+            maxBalance = 0.0;
+            activeCount = 0;
+            lockedCount = 0;
+
+            for (const auto& a : accounts) {
+                totalBalance += a.balance;
+                minBalance = std::min(minBalance, a.balance);
+                maxBalance = std::max(maxBalance, a.balance);
+
+                if (a.status == "active") {
+                    ++activeCount;
+                } else if (a.status == "locked") {
+                    ++lockedCount;
+                }
+            }
+        }
+
+        crow::json::wvalue out;
+        out["accounts"] = (int)accounts.size();
+        out["iterations"] = iterations;
+        out["totalBalance"] = totalBalance;
+        out["minBalance"] = (accounts.empty() ? 0.0 : minBalance);
+        out["maxBalance"] = maxBalance;
+        out["active"] = activeCount;
+        out["locked"] = lockedCount;
+
+        crow::response res(200);
+        res.set_header("Content-Type", "application/json");
+        res.write(out.dump());
+        return res;
+    });
+
 
     int port = 8080;
     if (const char* envPort = std::getenv("PORT")) {
