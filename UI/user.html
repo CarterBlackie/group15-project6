@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>User</title>
+  <title>User + Accounts</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -17,18 +17,16 @@
   </header>
 
   <main>
+    <!-- Top controls -->
     <div class="card" style="margin-bottom:14px;">
       <div class="toolbar">
         <div class="left">
-          <div>
-            <label for="apiBase">API Base URL</label>
-            <input id="apiBase" />
-          </div>
-          <div style="min-width:220px;">
+          <div style="min-width:260px;">
             <label for="userIdInput">User ID</label>
             <input id="userIdInput" type="number" min="1" placeholder="e.g. 1" />
           </div>
         </div>
+
         <div class="actions">
           <button class="secondary" id="btnHealth">Health</button>
           <button class="secondary" id="btnGo">Go</button>
@@ -36,55 +34,72 @@
           <button id="btnReloadAccounts">Reload accounts</button>
         </div>
       </div>
+
       <div id="status" class="muted" style="margin-top:10px;"></div>
+      <div class="muted" style="margin-top:8px;">
+        Tip: Use <strong>Go</strong> to set the URL (id=), then reload user or accounts.
+      </div>
     </div>
 
     <div class="grid">
+      <!-- User panel -->
       <div class="card">
         <div class="toolbar">
-          <h2 style="margin:0;">User</h2>
-          <span class="pill" id="activeUserPill">id: -</span>
+          <div class="left" style="align-items:baseline;gap:10px;">
+            <h2 style="margin:0;">User</h2>
+            <span class="pill" id="activeUserPill">id: -</span>
+          </div>
         </div>
         <pre id="userJson">{}</pre>
       </div>
 
+      <!-- Accounts panel -->
       <div class="card">
         <div class="toolbar">
-          <h2 style="margin:0;">Accounts</h2>
-          <span class="pill" id="accountsCount">0</span>
+          <div class="left" style="align-items:baseline;gap:10px;">
+            <h2 style="margin:0;">Accounts</h2>
+            <span class="pill" id="accountsCount">0</span>
+          </div>
         </div>
+
         <ul class="list" id="accountsList"></ul>
 
         <hr style="border:none;border-top:1px solid #eef1f6;margin:14px 0;">
 
-        <h2>Create account</h2>
+        <h2 style="margin:0 0 10px 0;">Create account</h2>
+
         <div class="row-1">
           <div>
-            <label>Type</label>
+            <label for="acctType">Type</label>
             <input id="acctType" placeholder="chequing, savings, credit…" />
           </div>
+
           <div class="row" style="margin-top:10px;">
             <div>
-              <label>Status</label>
+              <label for="acctStatus">Status</label>
               <select id="acctStatus">
                 <option value="active">active</option>
                 <option value="inactive">inactive</option>
                 <option value="closed">closed</option>
               </select>
             </div>
+
             <div>
-              <label>Balance</label>
+              <label for="acctBalance">Balance</label>
               <input id="acctBalance" type="number" step="0.01" min="0" value="0" />
             </div>
           </div>
         </div>
+
         <div class="actions" style="margin-top:12px;">
           <button id="btnCreateAccount">Create account</button>
           <button class="secondary" id="btnClearAccount" type="button">Clear</button>
         </div>
 
         <div class="card" style="margin-top:14px;">
-          <h2>Last response</h2>
+          <div class="toolbar">
+            <h2 style="margin:0;">Last response</h2>
+          </div>
           <pre id="lastJson">{}</pre>
         </div>
       </div>
@@ -92,9 +107,8 @@
   </main>
 
   <script type="module">
-    import { $, wireApiBaseInput, setActiveNav, setStatus, apiFetch, esc, qs, setQs, healthCheck } from "./app.js";
+    import { $, setActiveNav, setStatus, apiFetch, esc, qs, setQs, healthCheck } from "./app.js";
 
-    wireApiBaseInput();
     setActiveNav("user.html");
 
     function renderAccounts(list) {

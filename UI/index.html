@@ -17,27 +17,40 @@
   </header>
 
   <main>
+    <!-- Intro / Quick Actions -->
     <div class="card">
       <div class="toolbar">
         <div class="left">
           <div>
-            <label for="apiBase">API Base URL</label>
-            <input id="apiBase" />
+            <h2 style="margin:0;">Dashboard</h2>
+            <div class="muted" style="margin-top:6px;">
+              Use the tabs above to manage users and accounts.
+            </div>
           </div>
         </div>
+
         <div class="actions">
           <button class="secondary" id="btnHealth">Health</button>
         </div>
       </div>
-      <div id="status" class="muted" style="margin-top:10px;"></div>
-      <div class="muted" style="margin-top:10px;">
-        Use the pages above.
+
+      <div id="status" class="muted" style="margin-top:12px;"></div>
+
+      <div class="muted" style="margin-top:12px;">
+        Tip: Open <strong>Users</strong> to create a user, then use <strong>User + Accounts</strong> to add accounts.
       </div>
     </div>
 
+    <!-- Routes -->
     <div class="card" style="margin-top:14px;">
-      <h2>Routes covered</h2>
-      <pre>{
+      <div class="toolbar" style="align-items:flex-end;">
+        <div class="left">
+          <h2 style="margin:0;">Routes</h2>
+          <div class="muted" style="margin-top:6px;">What this UI can call.</div>
+        </div>
+      </div>
+
+      <pre style="margin-top:12px;">{
   "GET": ["/health", "/users", "/users/:id", "/users/:id/accounts"],
   "POST": ["/users", "/users/:id/accounts"]
 }</pre>
@@ -45,8 +58,7 @@
   </main>
 
   <script type="module">
-    import { wireApiBaseInput, setActiveNav, healthCheck } from "./app.js";
-    wireApiBaseInput();
+    import { setActiveNav, healthCheck } from "./app.js";
     setActiveNav("index.html");
     document.getElementById("btnHealth").onclick = healthCheck;
   </script>

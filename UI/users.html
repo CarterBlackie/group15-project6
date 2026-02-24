@@ -17,67 +17,78 @@
   </header>
 
   <main>
+    <!-- Top controls -->
     <div class="card" style="margin-bottom:14px;">
       <div class="toolbar">
         <div class="left">
-          <div>
-            <label for="apiBase">API Base URL</label>
-            <input id="apiBase" />
-          </div>
-          <div style="min-width:220px;">
+          <div style="min-width:260px;">
             <label for="userSearch">Search</label>
             <input id="userSearch" placeholder="Name or email…" />
           </div>
         </div>
+
         <div class="actions">
           <button class="secondary" id="btnHealth">Health</button>
           <button id="btnRefresh">Refresh</button>
         </div>
       </div>
+
       <div id="status" class="muted" style="margin-top:10px;"></div>
+      <div class="muted" style="margin-top:8px;">
+        Tip: Click <strong>Open</strong> to view that user’s accounts.
+      </div>
     </div>
 
     <div class="grid">
+      <!-- Users list -->
       <div class="card">
         <div class="toolbar">
-          <h2 style="margin:0;">Users</h2>
-          <span class="pill" id="usersCount">0</span>
+          <div class="left" style="align-items:baseline;gap:10px;">
+            <h2 style="margin:0;">Users</h2>
+            <span class="pill" id="usersCount">0</span>
+          </div>
         </div>
+
         <ul class="list" id="usersList"></ul>
-        <div class="muted" style="margin-top:10px;">
-          Click <b>Open</b> to view that user’s accounts.
-        </div>
       </div>
 
+      <!-- Create user -->
       <div class="card">
-        <h2>Create user</h2>
+        <div class="toolbar">
+          <h2 style="margin:0;">Create user</h2>
+        </div>
+
         <div class="row">
           <div>
-            <label>First name</label>
+            <label for="firstName">First name</label>
             <input id="firstName" />
           </div>
           <div>
-            <label>Last name</label>
+            <label for="lastName">Last name</label>
             <input id="lastName" />
           </div>
         </div>
+
         <div class="row-1" style="margin-top:10px;">
           <div>
-            <label>Email</label>
+            <label for="email">Email</label>
             <input id="email" type="email" />
           </div>
           <div>
-            <label>Password</label>
+            <label for="password">Password</label>
             <input id="password" type="password" />
           </div>
         </div>
+
         <div class="actions" style="margin-top:12px;">
           <button id="btnCreate">Create</button>
           <button class="secondary" id="btnClear" type="button">Clear</button>
         </div>
 
         <div class="card" style="margin-top:14px;">
-          <h2>Last response</h2>
+          <div class="toolbar">
+            <h2 style="margin:0;">Last response</h2>
+          </div>
           <pre id="lastJson">{}</pre>
         </div>
       </div>
@@ -85,9 +96,8 @@
   </main>
 
   <script type="module">
-    import { $, wireApiBaseInput, setActiveNav, setStatus, apiFetch, esc, healthCheck } from "./app.js";
+    import { $, setActiveNav, setStatus, apiFetch, esc, healthCheck } from "./app.js";
 
-    wireApiBaseInput();
     setActiveNav("users.html");
 
     let usersCache = [];
