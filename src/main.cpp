@@ -919,7 +919,7 @@ int main() {
     });
 
     // GET /accounts CPU-intensive aggregation over all accounts
-    CROW_ROUTE(app, "/accounts").methods(crow::HTTPMethod::GET)
+    CROW_ROUTE(app, "/benchmark/accounts").methods(crow::HTTPMethod::GET)
     ([db](const crow::request& req) {
 
         int iterations = 1;
