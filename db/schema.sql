@@ -18,3 +18,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (userId) REFERENCES users(id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_users_lastName  ON users(lastName);
+CREATE INDEX IF NOT EXISTS idx_users_firstName ON users(firstName);
+CREATE INDEX IF NOT EXISTS idx_users_email     ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_createdAt ON users(createdAt);

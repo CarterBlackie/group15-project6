@@ -3,7 +3,7 @@ import random
 import string
 
 DB_PATH = "db/users.db"
-N_USERS = 5000
+N_USERS = 20000
 ACCOUNTS_PER_USER = 2
 
 def rand_name(n=6):
